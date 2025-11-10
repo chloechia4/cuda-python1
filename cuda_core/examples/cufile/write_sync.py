@@ -14,6 +14,8 @@ import cuda.bindings.driver as cuda
 from cuda.bindings import cufile
 from cuda.core.experimental._cufile._buffer_handle import BufferHandle
 from cuda.core.experimental._cufile._file_handle import FileHandle
+from cuda.core.experimental._cufile._driver_handle import DriverHandle
+from cuda.core.experimental import Buffer
 
 
 def main():
@@ -38,8 +40,8 @@ def main():
     (err,) = cuda.cuCtxSetCurrent(ctx)
     assert err == cuda.CUresult.CUDA_SUCCESS
     
-    # Step 3: Open cuFile driver
-    cufile.driver_open()
+    # Step 3: Open cuFile driver using DriverHandle
+    driver_handle = DriverHandle()
     
     # Step 4: Allocate GPU buffer
     err, buf_ptr = cuda.cuMemAlloc(size)
@@ -74,7 +76,7 @@ def main():
     buf_handle.close()
     file_handle.close()
     cuda.cuMemFree(buf_ptr)
-    cufile.driver_close()
+    driver_handle.close()
     cuda.cuDevicePrimaryCtxRelease(device)
     
     if os.path.exists(filename):
