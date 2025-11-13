@@ -16,43 +16,36 @@ from cuda.core.experimental._cufile._buffer_handle import BufferHandle
 from cuda.core.experimental._cufile._file_handle import FileHandle
 from cuda.core.experimental._cufile._driver_handle import DriverHandle
 from cuda.core.experimental._cufile._io_params import IOParams
+from cuda.core.experimental import Device
 
 
 def main():
-    """Example of asynchronously writing a file using cuFile."""
+    """Example of asynchronously writing a file using cuFile with cuda.core memory resource."""
     
     size = 4096
     filename = "test-write-async.bin"
     
     test_data = np.arange(size, dtype=np.uint8)
     
-    (err,) = cuda.cuInit(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    err, device = cuda.cuDeviceGet(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    err, ctx = cuda.cuDevicePrimaryCtxRetain(device)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    (err,) = cuda.cuCtxSetCurrent(ctx)
-    assert err == cuda.CUresult.CUDA_SUCCESS
+    # Initialize CUDA using cuda.core Device
+    dev = Device(0)
+    dev.set_current()
     
     driver_handle = DriverHandle()
     
-    err, buf_ptr = cuda.cuMemAlloc(size)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    buf_ptr_int = int(buf_ptr)
+    # Allocate GPU buffer using cuda.core memory resource
+    gpu_buffer = dev.allocate(size)
     
-    err, = cuda.cuMemcpyHtoD(buf_ptr, test_data.ctypes.data, size)
+    # Copy data to GPU
+    err, = cuda.cuMemcpyHtoD(int(gpu_buffer.handle), test_data.ctypes.data, size)
     assert err == cuda.CUresult.CUDA_SUCCESS
     
-    buf_handle = BufferHandle(buf_ptr_int, size, 0)
+    buf_handle = BufferHandle(gpu_buffer, size, 0)
     
     file_handle = FileHandle(use_direct=True, flags=os.O_CREAT, file_path=filename)
     
     io_params = IOParams(
-        buffer=buf_ptr_int,
+        buffer=gpu_buffer,
         size=size,
         file_offset=0,
         buffer_offset=0
@@ -71,9 +64,8 @@ def main():
     written_data = np.fromfile(filename, dtype=np.uint8)
     np.testing.assert_array_equal(test_data, written_data)
     
-    cuda.cuMemFree(buf_ptr)
+    # Cleanup - gpu_buffer is automatically freed when it goes out of scope!
     driver_handle.close()
-    cuda.cuDevicePrimaryCtxRelease(device)
     
     if os.path.exists(filename):
         os.unlink(filename)

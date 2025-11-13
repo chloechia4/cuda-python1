@@ -21,11 +21,11 @@ from cuda.core.experimental._cufile._batch_handle import (
     make_write_operation,
     BatchIOResult
 )
-from cuda.core.experimental import Buffer
+from cuda.core.experimental import Device
 
 
 def main():
-    """Example of batch I/O operations using cuFile with cuda.core Buffer."""
+    """Example of batch I/O operations using cuFile with cuda.core memory resource."""
     
     num_operations = 3
     chunk_size = 4096  # 4KB per chunk
@@ -36,31 +36,18 @@ def main():
     test_data.tofile(filename)
     os.sync()
     
-    (err,) = cuda.cuInit(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    err, device = cuda.cuDeviceGet(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    err, ctx = cuda.cuDevicePrimaryCtxRetain(device)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    (err,) = cuda.cuCtxSetCurrent(ctx)
-    assert err == cuda.CUresult.CUDA_SUCCESS
+    # Initialize CUDA using cuda.core Device
+    dev = Device(0)
+    dev.set_current()
     
     driver_handle = DriverHandle()
     
-    buffers = []
     gpu_buffers = []
     buf_handles = []
     
+    # Allocate GPU buffers using cuda.core memory resource
     for i in range(num_operations):
-        err, buf_ptr = cuda.cuMemAlloc(chunk_size)
-        assert err == cuda.CUresult.CUDA_SUCCESS
-        buf_ptr_int = int(buf_ptr)
-        buffers.append(buf_ptr_int)
-        
-        gpu_buffer = Buffer.from_handle(buf_ptr, chunk_size)
+        gpu_buffer = dev.allocate(chunk_size)
         gpu_buffers.append(gpu_buffer)
         
         buf_handle = BufferHandle(gpu_buffer, chunk_size, 0)
@@ -103,19 +90,18 @@ def main():
     
     for i in range(num_operations):
         host_buffer = np.empty(chunk_size, dtype=np.uint8)
-        err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, buffers[i], chunk_size)
+        err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, int(gpu_buffers[i].handle), chunk_size)
         assert err == cuda.CUresult.CUDA_SUCCESS
         
         expected_chunk = test_data[i * chunk_size:(i + 1) * chunk_size]
         np.testing.assert_array_equal(expected_chunk, host_buffer)
     
-    for i, buf_handle in enumerate(buf_handles):
+    # Cleanup - gpu_buffers are automatically freed when they go out of scope!
+    for buf_handle in buf_handles:
         buf_handle.close()
-        cuda.cuMemFree(buffers[i])
     
     file_handle.close()
     driver_handle.close()
-    cuda.cuDevicePrimaryCtxRelease(device)
     
     if os.path.exists(filename):
         os.unlink(filename)

@@ -15,10 +15,11 @@ from cuda.bindings import cufile
 from cuda.core.experimental._cufile._buffer_handle import BufferHandle
 from cuda.core.experimental._cufile._file_handle import FileHandle
 from cuda.core.experimental._cufile._driver_handle import DriverHandle
+from cuda.core.experimental import Device
 
 
 def main():
-    """Example of reading a file using cuFile."""
+    """Example of reading a file using cuFile with cuda.core memory resource."""
     
     # Test parameters
     size = 4096
@@ -29,61 +30,44 @@ def main():
     test_data.tofile(filename)
     os.sync()
     
-    # Step 2: Initialize CUDA
-    (err,) = cuda.cuInit(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
+    # Step 2: Initialize CUDA using cuda.core Device
+    dev = Device(0)
+    dev.set_current()
     
-    err, device = cuda.cuDeviceGet(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
+    # Step 3: Open cuFile driver
+    cufile.driver_open()
     
-    err, ctx = cuda.cuDevicePrimaryCtxRetain(device)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    (err,) = cuda.cuCtxSetCurrent(ctx)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    # Step 3: Open cuFile driver using DriverHandle
-    driver_handle = DriverHandle()
-    
-    # Step 4: Allocate GPU buffer
-    err, buf_ptr = cuda.cuMemAlloc(size)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    buf_ptr_int = int(buf_ptr)
+    # Step 4: Allocate GPU buffer using cuda.core memory resource
+    gpu_buffer = dev.allocate(size)
     
     # Step 5: Register buffer with cuFile
-    buf_handle = BufferHandle(buf_ptr_int, size, 0)
+    buf_handle = BufferHandle(gpu_buffer, size, 0)
     
     # Step 6: Open file with cuFile
     file_handle = FileHandle(use_direct=True, flags=0, file_path=filename)
     
-    # Step 7: Read file into GPU buffer (like KvikIO f.read(b))
+    # Step 7: Read file into GPU buffer
     bytes_read = file_handle.read(
-        buffer=buf_ptr_int,
+        buffer=gpu_buffer,
         size=size,
         file_offset=0,
         buf_offset=0
     )
     
-    # Assert like KvikIO: f.read(b) == b.nbytes
     assert bytes_read == size, f"Expected to read {size} bytes, got {bytes_read}"
     
-    # Step 8: Copy back to CPU and verify (like KvikIO xp.testing.assert_array_equal)
+    # Step 8: Copy back to CPU and verify
     host_buffer = np.empty(size, dtype=np.uint8)
-    err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, buf_ptr, size)
+    err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, int(gpu_buffer.handle), size)
     assert err == cuda.CUresult.CUDA_SUCCESS
     
     # Verify data matches
     np.testing.assert_array_equal(test_data, host_buffer)
 
-    # 1. Close handles BEFORE closing driver
+    # Cleanup - gpu_buffer is automatically freed when it goes out of scope!
     buf_handle.close()
     file_handle.close()
-    # 2. Free GPU memory
-    cuda.cuMemFree(buf_ptr)
-    # 3. Close cuFile driver using DriverHandle
-    driver_handle.close()
-    # 4. Release CUDA context
-    cuda.cuDevicePrimaryCtxRelease(device)
+    cufile.driver_close()
     
     if os.path.exists(filename):
         os.unlink(filename)

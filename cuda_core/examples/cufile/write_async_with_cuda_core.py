@@ -15,39 +15,29 @@ from cuda.bindings import cufile
 from cuda.core.experimental._cufile._buffer_handle import BufferHandle
 from cuda.core.experimental._cufile._file_handle import FileHandle
 from cuda.core.experimental._cufile._io_params import IOParams
-from cuda.core.experimental import Buffer
+from cuda.core.experimental import Device
 
 
 def main():
-    """Example of async writing a file using cuFile with cuda.core Buffer."""
+    """Example of async writing a file using cuFile with cuda.core memory resource."""
     
     size = 4096
     filename = "test-write-async.bin"
     
     test_data = np.arange(size, dtype=np.uint8)
     
-    (err,) = cuda.cuInit(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    err, device = cuda.cuDeviceGet(0)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    err, ctx = cuda.cuDevicePrimaryCtxRetain(device)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    (err,) = cuda.cuCtxSetCurrent(ctx)
-    assert err == cuda.CUresult.CUDA_SUCCESS
+    # Initialize CUDA using cuda.core Device
+    dev = Device(0)
+    dev.set_current()
     
     cufile.driver_open()
     
-    err, buf_ptr = cuda.cuMemAlloc(size)
-    assert err == cuda.CUresult.CUDA_SUCCESS
-    buf_ptr_int = int(buf_ptr)
+    # Allocate GPU buffer using cuda.core memory resource
+    gpu_buffer = dev.allocate(size)
     
-    err, = cuda.cuMemcpyHtoD(buf_ptr, test_data.ctypes.data, size)
+    # Copy data to GPU
+    err, = cuda.cuMemcpyHtoD(int(gpu_buffer.handle), test_data.ctypes.data, size)
     assert err == cuda.CUresult.CUDA_SUCCESS
-    
-    gpu_buffer = Buffer.from_handle(buf_ptr, size)
     
     buf_handle = BufferHandle(gpu_buffer, size, 0)
     
@@ -73,9 +63,8 @@ def main():
     written_data = np.fromfile(filename, dtype=np.uint8)
     np.testing.assert_array_equal(test_data, written_data)
     
-    cuda.cuMemFree(buf_ptr)
+    # Cleanup - gpu_buffer is automatically freed when it goes out of scope!
     cufile.driver_close()
-    cuda.cuDevicePrimaryCtxRelease(device)
     
     if os.path.exists(filename):
         os.unlink(filename)
