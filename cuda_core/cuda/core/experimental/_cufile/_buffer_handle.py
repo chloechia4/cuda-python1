@@ -6,19 +6,26 @@ class BufferHandle:
         Initialize buffer handle for cuFile operations.
 
         Args:
-            buffer: Raw pointer (CUdeviceptr or int) from cuMemAlloc
+            buffer: Raw pointer (int), cuda.core Buffer, or buffer-like object
             size: Buffer size in bytes (required)
             flags: Registration flags for cuFile
         """
         print(f"BufferHandle.__init__: Starting initialization...")
         print(f"  buffer={buffer}, size={size}, flags={flags}")
 
-        self.buffer = buffer
+        # Extract pointer from buffer object
+        if hasattr(buffer, 'handle'):
+            self.buffer = int(buffer.handle)
+        elif hasattr(buffer, 'ptr'):
+            self.buffer = int(buffer.ptr)
+        elif isinstance(buffer, int):
+            self.buffer = buffer
+        else:
+            self.buffer = int(buffer)
+        
         self.flags = flags
         self._buffer_size = size
         self._registered = False
-
-        # Convert buffer pointer to integer (from cuMemAlloc)
 
         print(f"  About to call _register_buffer()...")
         self._register_buffer()

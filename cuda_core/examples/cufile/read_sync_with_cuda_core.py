@@ -54,7 +54,7 @@ def main():
     gpu_buffer = Buffer.from_handle(buf_ptr, size)
     
     # Step 6: Register buffer with cuFile
-    buf_handle = BufferHandle(buf_ptr_int, size, 0)
+    buf_handle = BufferHandle(gpu_buffer, size, 0)
     
     # Step 7: Open file with cuFile
     file_handle = FileHandle(use_direct=True, flags=0, file_path=filename)
@@ -90,7 +90,6 @@ def main():
     
     if os.path.exists(filename):
         os.unlink(filename)
-
 
 
 if __name__ == "__main__":

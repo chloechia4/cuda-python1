@@ -14,15 +14,14 @@ import cuda.bindings.driver as cuda
 from cuda.bindings import cufile
 from cuda.core.experimental._cufile._buffer_handle import BufferHandle
 from cuda.core.experimental._cufile._file_handle import FileHandle
-from cuda.core.experimental._cufile._io_params import IOParams
 from cuda.core.experimental import Buffer
 
 
 def main():
-    """Example of async writing a file using cuFile with cuda.core Buffer."""
+    """Example of writing a file using cuFile with cuda.core Buffer."""
     
     size = 4096
-    filename = "test-write-async.bin"
+    filename = "test-write.bin"
     
     test_data = np.arange(size, dtype=np.uint8)
     
@@ -53,26 +52,20 @@ def main():
     
     file_handle = FileHandle(use_direct=True, flags=os.O_CREAT, file_path=filename)
     
-    io_params = IOParams(
+    bytes_written = file_handle.write(
         buffer=gpu_buffer,
         size=size,
         file_offset=0,
-        buffer_offset=0
+        buf_offset=0
     )
     
-    file_handle.write_async(io_params, stream=0)
-    
-    cuda.cuStreamSynchronize(0)
-    
-    bytes_written = io_params.get_bytes_done()
     assert bytes_written == size, f"Expected to write {size} bytes, got {bytes_written}"
-    
-    buf_handle.close()
-    file_handle.close()
     
     written_data = np.fromfile(filename, dtype=np.uint8)
     np.testing.assert_array_equal(test_data, written_data)
-    
+
+    buf_handle.close()
+    file_handle.close()
     cuda.cuMemFree(buf_ptr)
     cufile.driver_close()
     cuda.cuDevicePrimaryCtxRelease(device)

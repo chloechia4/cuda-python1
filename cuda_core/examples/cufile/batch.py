@@ -21,10 +21,11 @@ from cuda.core.experimental._cufile._batch_handle import (
     make_write_operation,
     BatchIOResult
 )
+from cuda.core.experimental import Buffer
 
 
 def main():
-    """Example of batch I/O operations using cuFile."""
+    """Example of batch I/O operations using cuFile with cuda.core Buffer."""
     
     num_operations = 3
     chunk_size = 4096  # 4KB per chunk
@@ -50,6 +51,7 @@ def main():
     driver_handle = DriverHandle()
     
     buffers = []
+    gpu_buffers = []
     buf_handles = []
     
     for i in range(num_operations):
@@ -58,7 +60,10 @@ def main():
         buf_ptr_int = int(buf_ptr)
         buffers.append(buf_ptr_int)
         
-        buf_handle = BufferHandle(buf_ptr_int, chunk_size, 0)
+        gpu_buffer = Buffer.from_handle(buf_ptr, chunk_size)
+        gpu_buffers.append(gpu_buffer)
+        
+        buf_handle = BufferHandle(gpu_buffer, chunk_size, 0)
         buf_handles.append(buf_handle)
         
     file_handle = FileHandle(use_direct=True, flags=0, file_path=filename)
@@ -72,7 +77,7 @@ def main():
             
             op = make_read_operation(
                 file_handle=file_handle,
-                buffer=buffers[i],
+                buffer=gpu_buffers[i],
                 size=chunk_size,
                 file_offset=file_offset,
                 buffer_offset=0,

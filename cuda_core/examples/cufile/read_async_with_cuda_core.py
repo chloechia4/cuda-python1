@@ -48,7 +48,7 @@ def main():
     
     gpu_buffer = Buffer.from_handle(buf_ptr, size)
     
-    buf_handle = BufferHandle(buf_ptr_int, size, 0)
+    buf_handle = BufferHandle(gpu_buffer, size, 0)
     
     file_handle = FileHandle(use_direct=True, flags=0, file_path=filename)
     
