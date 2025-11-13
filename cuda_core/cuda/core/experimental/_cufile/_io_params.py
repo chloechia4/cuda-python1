@@ -3,12 +3,14 @@ import ctypes
 
 class IOParams:
     def __init__(self, buffer, size, file_offset=0, buffer_offset=0):
-        if hasattr(buffer, 'ptr'):
+        if hasattr(buffer, 'handle'):
+            self.buffer = int(buffer.handle)
+        elif hasattr(buffer, 'ptr'):
             self.buffer = int(buffer.ptr)
-        elif not isinstance(buffer, int):
-            self.buffer = int(buffer)
-        else:
+        elif isinstance(buffer, int):
             self.buffer = buffer
+        else:
+            self.buffer = int(buffer)
         
         self.size = size
         self.file_offset = file_offset
