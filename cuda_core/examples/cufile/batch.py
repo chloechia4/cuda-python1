@@ -72,22 +72,28 @@ def main():
             )
             operations.append(op)
         
+        print(f"Submitting {len(operations)} batch read operations...")
+        batch.submit(operations, flags=0)
         
-        batch.submit(operations)
+        # Get status of submitted operations
+        print("Waiting for batch operations to complete...")
+        results = batch.get_status(min_completed=num_operations, timeout_ms=5000)
         
-        results = batch.execute_operations()
-        
+        # Check results
+        print(f"Batch operations completed. Checking {len(results)} results:")
         for i, result in enumerate(results):
             if result.is_complete():
                 print(f"  Operation {i} (cookie: {result.cookie}): ✓ {result.result} bytes")
             elif result.has_error():
                 print(f"  Operation {i}: ✗ Error: {result.error}")
             else:
-                print(f"  Operation {i}: Incomplete")
+                print(f"  Operation {i}: Incomplete (status={result.status})")
         
         assert all(r.is_complete() for r in results), "Not all operations completed successfully"
     
     
+    # Verify data by copying back to host and comparing
+    print("\nVerifying data read from batch operations...")
     for i in range(num_operations):
         host_buffer = np.empty(chunk_size, dtype=np.uint8)
         err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, int(gpu_buffers[i].handle), chunk_size)
@@ -95,6 +101,7 @@ def main():
         
         expected_chunk = test_data[i * chunk_size:(i + 1) * chunk_size]
         np.testing.assert_array_equal(expected_chunk, host_buffer)
+        print(f"  Chunk {i}: ✓ Data matches")
     
     # Cleanup - gpu_buffers are automatically freed when they go out of scope!
     for buf_handle in buf_handles:
@@ -105,6 +112,8 @@ def main():
     
     if os.path.exists(filename):
         os.unlink(filename)
+    
+    print("\n✓ Batch I/O example completed successfully!")
 
 
 if __name__ == "__main__":

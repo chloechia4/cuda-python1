@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+import ctypes
 from cuda.bindings import cufile
 
 
@@ -26,7 +27,6 @@ class BatchIOParams:
         self.opcode = opcode
         self.cookie = cookie or {}
 
-
 class BatchIOResult:
     """Result of a batch I/O operation"""
     def __init__(self, status: int, result: int, error: Optional[str] = None, cookie=None):
@@ -46,20 +46,18 @@ class BatchIOResult:
     
     def is_complete(self) -> bool:
         """Check if operation completed successfully"""
-        return self.status == 0 and self.error is None
+            return self.status == cufile.Status.COMPLETE
+
+    
+    def is_failed(self) -> bool:
+        """Check if operation failed"""
+            return self.status == cufile.Status.FAILED
+
     
     def has_error(self) -> bool:
         """Check if operation has an error"""
-        return self.error is not None or self.status != 0
+        return self.error is not None or self.status < 0
     
-    def __repr__(self):
-        if self.is_complete():
-            return f"BatchIOResult(complete, {self.result} bytes)"
-        elif self.has_error():
-            return f"BatchIOResult(error: {self.error})"
-        else:
-            return f"BatchIOResult(status={self.status})"
-
 
 def make_read_operation(file_handle, buffer, size, file_offset=0, 
                        buffer_offset=0, cookie=None) -> BatchIOParams:
@@ -68,7 +66,7 @@ def make_read_operation(file_handle, buffer, size, file_offset=0,
     
     Args:
         file_handle: cuFile file handle
-        buffer: Device buffer pointer (int) or buffer-like object
+        buffer: Device buffer pointer (int), cuda.core Buffer, or buffer-like object
         size: Size of the read operation in bytes
         file_offset: Offset in file (default: 0)
         buffer_offset: Offset in buffer (default: 0)
@@ -77,8 +75,9 @@ def make_read_operation(file_handle, buffer, size, file_offset=0,
     Returns:
         BatchIOParams configured for a read operation
     """
-    # If buffer is an object with a pointer, extract it
-    if hasattr(buffer, 'ptr'):
+    if hasattr(buffer, 'handle'):
+        buffer = int(buffer.handle)
+    elif hasattr(buffer, 'ptr'):
         buffer = int(buffer.ptr)
     elif not isinstance(buffer, int):
         buffer = int(buffer)
@@ -93,7 +92,6 @@ def make_read_operation(file_handle, buffer, size, file_offset=0,
         cookie=cookie
     )
 
-
 def make_write_operation(file_handle, buffer, size, file_offset=0, 
                         buffer_offset=0, cookie=None) -> BatchIOParams:
     """
@@ -101,7 +99,7 @@ def make_write_operation(file_handle, buffer, size, file_offset=0,
     
     Args:
         file_handle: cuFile file handle
-        buffer: Device buffer pointer (int) or buffer-like object
+        buffer: Device buffer pointer (int), cuda.core Buffer, or buffer-like object
         size: Size of the write operation in bytes
         file_offset: Offset in file (default: 0)
         buffer_offset: Offset in buffer (default: 0)
@@ -110,8 +108,9 @@ def make_write_operation(file_handle, buffer, size, file_offset=0,
     Returns:
         BatchIOParams configured for a write operation
     """
-    # If buffer is an object with a pointer, extract it
-    if hasattr(buffer, 'ptr'):
+    if hasattr(buffer, 'handle'):
+        buffer = int(buffer.handle)
+    elif hasattr(buffer, 'ptr'):
         buffer = int(buffer.ptr)
     elif not isinstance(buffer, int):
         buffer = int(buffer)
@@ -125,7 +124,6 @@ def make_write_operation(file_handle, buffer, size, file_offset=0,
         opcode=1,  # 1 = write
         cookie=cookie
     )
-
 
 class BatchHandle:
     """Context manager for batch I/O operations"""
@@ -149,7 +147,7 @@ class BatchHandle:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - ensures proper cleanup"""
         self.close()
-        return False  # Don't suppress exceptions
+        return False  
 
     def close(self):
         """Explicitly close the batch handle and cleanup"""
@@ -176,133 +174,103 @@ class BatchHandle:
             self._handle = None
 
     def submit(self, operations: List[BatchIOParams], flags: int = 0):
-        """
-        Submit a batch of I/O operations.
-        
-        Args:
-            operations: List of BatchIOParams describing the operations
-            flags: Submission flags (default: 0)
-            
-        Raises:
-            RuntimeError: If batch handle is not initialized or submission fails
-        """
+       
         if self._handle is None:
             raise RuntimeError("Batch handle not initialized")
-        
+
         if len(operations) > self.max_operations:
             raise ValueError(f"Number of operations ({len(operations)}) exceeds max ({self.max_operations})")
-        
+
         # Store operations for later retrieval in get_status
         self._pending_operations = operations
-        
-        # Note: Full cuFile batch submission requires creating CUfileIOParams_t C structures
-        # For now, we store the operations and they can be executed individually
-        # Future: Convert BatchIOParams to CUfileIOParams_t and call:
-        # cufile.batch_io_submit(self._handle, len(operations), iocbp_ptr, flags)
-        print(f"BatchHandle: {len(operations)} operations queued for submission")
-    
-    def execute_operations(self) -> List[BatchIOResult]:
-        """
-        Execute the pending operations (fallback when C structures not available).
-        This performs the operations individually but returns results in batch format.
-        
-        Returns:
-            List of BatchIOResult objects with status of operations
-        """
-        if not self._pending_operations:
-            return []
-        
-        results = []
-        for i, op in enumerate(self._pending_operations):
-            try:
-                # Get the file handle's _handle attribute
-                file_handle = op.file_handle
-                
-                # Perform the operation based on opcode
-                if op.opcode == 0:  # Read
-                    from cuda.bindings import cufile
-                    bytes_transferred = cufile.read(
-                        file_handle._handle,
-                        op.buffer,
-                        op.size,
-                        op.file_offset,
-                        op.buf_offset
-                    )
-                elif op.opcode == 1:  # Write
-                    from cuda.bindings import cufile
-                    bytes_transferred = cufile.write(
-                        file_handle._handle,
-                        op.buffer,
-                        op.size,
-                        op.file_offset,
-                        op.buf_offset
-                    )
-                else:
-                    raise ValueError(f"Unknown opcode: {op.opcode}")
-                
-                # Create success result
-                results.append(BatchIOResult(
-                    status=0,
-                    result=bytes_transferred,
-                    error=None,
-                    cookie=op.cookie
-                ))
-            except Exception as e:
-                # Create error result
-                results.append(BatchIOResult(
-                    status=-1,
-                    result=0,
-                    error=str(e),
-                    cookie=op.cookie
-                ))
-        
-        return results
 
-    def get_status(self, min_completed: int = 1, timeout_ms: Optional[int] = None) -> List[BatchIOResult]:
+        # Create CUfileIOParams_t array
+        io_params = cufile.IOParams(len(operations))
+
+        # Convert BatchIOParams to CUfileIOParams_t structures
+        for i, op in enumerate(operations):
+            io_params[i].mode = cufile.BatchMode.BATCH
+            io_params[i].fh = op.file_handle
+            io_params[i].opcode = cufile.Opcode.READ if op.opcode == 0 else cufile.Opcode.WRITE
+            io_params[i].cookie = id(op.cookie) if op.cookie else 0
+            io_params[i].u.batch.dev_ptr_base = op.buffer
+            io_params[i].u.batch.file_offset = op.file_offset
+            io_params[i].u.batch.dev_ptr_offset = op.buf_offset
+            io_params[i].u.batch.size_ = op.size
+
+        # Submit batch operations to the driver
+        cufile.batch_io_submit(self._handle, len(operations), io_params.ptr, flags)
+
+    def get_status(self, min_completed: int = 1, max_events: Optional[int] = None,
+                   timeout_ms: Optional[int] = None) -> List[BatchIOResult]:
         """
         Get status of submitted batch operations.
-        
+
         Args:
             min_completed: Minimum number of completed operations to wait for (default: 1)
-            timeout_ms: Optional timeout in milliseconds
-            
+            max_events: Maximum number of events to retrieve (default: max_operations)
+            timeout_ms: Optional timeout in milliseconds (None = wait indefinitely)
+
         Returns:
             List of BatchIOResult objects with status of operations
-            
+
         Raises:
             RuntimeError: If batch handle is not initialized
         """
         if self._handle is None:
             raise RuntimeError("Batch handle not initialized")
-        
-        # TODO: Need to create appropriate structures for nr, iocbp, and timeout
-        # This is a placeholder showing the interface
-        # For now, return an empty list to show the API
-        
-        # Future implementation would be:
-        # nr_completed = ctypes.c_uint(0)
-        # events = create_io_events_array(self.max_operations)
-        # timeout_spec = create_timespec_ms(timeout_ms) if timeout_ms else None
-        # cufile.batch_io_get_status(self._handle, min_completed, 
-        #                            ctypes.addressof(nr_completed),
-        #                            events, timeout_spec)
-        # 
-        # results = []
-        # for i in range(nr_completed.value):
-        #     results.append(BatchIOResult(
-        #         status=events[i].status,
-        #         result=events[i].result,
-        #         error=events[i].error if events[i].error else None,
-        #         cookie=events[i].cookie
-        #     ))
-        # return results
-        
-        raise NotImplementedError(
-            "Batch get_status requires creating result structures. "
-            "This will be implemented when the IOEvents structure is available."
+
+        # Determine max events to retrieve
+        if max_events is None:
+            max_events = self.max_operations
+
+        # Create the nr (number of events) parameter - this is input/output
+        nr = ctypes.c_uint(max_events)
+
+        # Create the events array to receive results
+        events = cufile.IOEvents(max_events)
+
+        # Create timeout structure if specified
+        timeout_ptr = 0
+        if timeout_ms is not None and timeout_ms > 0:
+            # Create timespec structure: convert milliseconds to sec + nsec
+            timeout = ctypes.create_string_buffer(16)  # sizeof(timespec) = 16 bytes
+            timeout_struct = ctypes.cast(timeout, ctypes.POINTER(ctypes.c_long * 2))
+            timeout_struct.contents[0] = timeout_ms // 1000  # tv_sec
+            timeout_struct.contents[1] = (timeout_ms % 1000) * 1_000_000  # tv_nsec
+            timeout_ptr = ctypes.addressof(timeout)
+
+        # Call the lower-level batch_io_get_status function
+        cufile.batch_io_get_status(
+            self._handle,
+            min_completed,
+            ctypes.addressof(nr),
+            events.ptr,
+            timeout_ptr
         )
-        
-        return []  # Placeholder
+
+        # Extract results from events array
+        results = []
+        num_events = nr.value
+
+        for i in range(num_events):
+            event = events[i]
+            cookie = None
+
+            # Try to match cookie back to original operation
+            cookie_id = event.cookie
+            for op in self._pending_operations:
+                if id(op.cookie) == cookie_id:
+                    cookie = op.cookie
+                    break
+
+            results.append(BatchIOResult(
+                status=event.status,
+                result=event.ret,
+                cookie=cookie
+            ))
+
+        return results
 
     def cancel(self):
         """
