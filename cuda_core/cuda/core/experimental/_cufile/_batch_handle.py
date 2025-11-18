@@ -46,12 +46,12 @@ class BatchIOResult:
     
     def is_complete(self) -> bool:
         """Check if operation completed successfully"""
-            return self.status == cufile.Status.COMPLETE
+        return self.status == cufile.Status.COMPLETE
 
     
     def is_failed(self) -> bool:
         """Check if operation failed"""
-            return self.status == cufile.Status.FAILED
+        return self.status == cufile.Status.FAILED
 
     
     def has_error(self) -> bool:
@@ -190,7 +190,7 @@ class BatchHandle:
         # Convert BatchIOParams to CUfileIOParams_t structures
         for i, op in enumerate(operations):
             io_params[i].mode = cufile.BatchMode.BATCH
-            io_params[i].fh = op.file_handle
+            io_params[i].fh = op.file_handle._handle
             io_params[i].opcode = cufile.Opcode.READ if op.opcode == 0 else cufile.Opcode.WRITE
             io_params[i].cookie = id(op.cookie) if op.cookie else 0
             io_params[i].u.batch.dev_ptr_base = op.buffer
