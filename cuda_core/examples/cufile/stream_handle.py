@@ -14,6 +14,8 @@ import cuda.bindings.driver as cuda
 from cuda.bindings import cufile
 from cuda.core.experimental._cufile._stream_handle import StreamHandle
 
+
+# add operations to the stream
 def test_stream_handle_basic():
     """Test StreamHandle as context manager."""
     print("Test 2: StreamHandle context manager")

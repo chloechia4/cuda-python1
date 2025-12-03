@@ -104,9 +104,6 @@ def main():
         print(f"\nSubmitting {len(operations)} operations to batch...")
         batch.submit(operations)
         
-        print("Executing batch operations...")
-        results = batch.execute_operations()
-        
         print("\n" + "="*60)
         print("Batch Operation Results:")
         print("="*60)
@@ -156,17 +153,6 @@ def main():
             os.unlink(filename)
     
     driver_handle.close()
-    
-    print("\n" + "="*60)
-    print("Batch Mixed Mode Example Completed Successfully!")
-    print("="*60)
-    print("\nKey Takeaways:")
-    print("  • Files can be opened with or without O_DIRECT")
-    print("  • Buffers can be registered or unregistered")
-    print("  • Batch operations work with mixed configurations")
-    print("  • Even indices: O_DIRECT + registered buffers")
-    print("  • Odd indices: Non-direct + unregistered buffers")
-
 
 if __name__ == "__main__":
     main()

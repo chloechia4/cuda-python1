@@ -32,9 +32,8 @@ def main():
     total_size = chunk_size * num_operations
     filename = "test-batch-file.bin"
     
+    # Create test data in host memory
     test_data = np.arange(total_size, dtype=np.uint8)
-    test_data.tofile(filename)
-    os.sync()
     
     # Initialize CUDA using cuda.core Device
     dev = Device(0)
@@ -45,24 +44,34 @@ def main():
     gpu_buffers = []
     buf_handles = []
     
-    # Allocate GPU buffers using cuda.core memory resource
+    # Allocate GPU buffers using cuda.core memory resource and copy test data to GPU
     for i in range(num_operations):
         gpu_buffer = dev.allocate(chunk_size)
         gpu_buffers.append(gpu_buffer)
         
+        # Copy test data chunk to GPU buffer
+        chunk_data = test_data[i * chunk_size:(i + 1) * chunk_size]
+        err, = cuda.cuMemcpyHtoD(int(gpu_buffer.handle), chunk_data.ctypes.data, chunk_size)
+        assert err == cuda.CUresult.CUDA_SUCCESS
+        
         buf_handle = BufferHandle(gpu_buffer, chunk_size, 0)
         buf_handles.append(buf_handle)
         
+    # Create empty file for writing
+    with open(filename, 'wb') as f:
+        f.write(b'\x00' * total_size)
+    
     file_handle = FileHandle(use_direct=True, flags=0, file_path=filename)
     
+    # ===== PHASE 1: Batch WRITE operations =====
     with BatchHandle(max_operations=num_operations) as batch:
         
-        operations = []
+        write_operations = []
         for i in range(num_operations):
             file_offset = i * chunk_size
-            cookie = {"operation_id": i, "offset": file_offset}
+            cookie = {"operation_id": i, "offset": file_offset, "type": "write"}
             
-            op = make_read_operation(
+            op = make_write_operation(
                 file_handle=file_handle,
                 buffer=gpu_buffers[i],
                 size=chunk_size,
@@ -70,38 +79,81 @@ def main():
                 buffer_offset=0,
                 cookie=cookie
             )
-            operations.append(op)
+            write_operations.append(op)
         
-        print(f"Submitting {len(operations)} batch read operations...")
-        batch.submit(operations, flags=0)
+        batch.submit(write_operations, flags=0)
         
         # Get status of submitted operations
-        print("Waiting for batch operations to complete...")
         results = batch.get_status(min_completed=num_operations, timeout_ms=5000)
         
         # Check results
-        print(f"Batch operations completed. Checking {len(results)} results:")
         for i, result in enumerate(results):
             if result.is_complete():
-                print(f"  Operation {i} (cookie: {result.cookie}): ✓ {result.result} bytes")
+                pass
             elif result.has_error():
-                print(f"  Operation {i}: ✗ Error: {result.error}")
+                pass
             else:
-                print(f"  Operation {i}: Incomplete (status={result.status})")
+                pass
         
-        assert all(r.is_complete() for r in results), "Not all operations completed successfully"
+        assert all(r.is_complete() for r in results), "Not all write operations completed successfully"
     
+    # ===== PHASE 2: Batch READ operations =====
+    # Allocate new GPU buffers for reading
+    gpu_read_buffers = []
+    buf_read_handles = []
     
-    # Verify data by copying back to host and comparing
-    print("\nVerifying data read from batch operations...")
+    for i in range(num_operations):
+        gpu_read_buffer = dev.allocate(chunk_size)
+        gpu_read_buffers.append(gpu_read_buffer)
+        
+        buf_read_handle = BufferHandle(gpu_read_buffer, chunk_size, 0)
+        buf_read_handles.append(buf_read_handle)
+    
+    with BatchHandle(max_operations=num_operations) as batch:
+        
+        read_operations = []
+        for i in range(num_operations):
+            file_offset = i * chunk_size
+            cookie = {"operation_id": i, "offset": file_offset, "type": "read"}
+            
+            op = make_read_operation(
+                file_handle=file_handle,
+                buffer=gpu_read_buffers[i],
+                size=chunk_size,
+                file_offset=file_offset,
+                buffer_offset=0,
+                cookie=cookie
+            )
+            read_operations.append(op)
+        
+        batch.submit(read_operations, flags=0)
+        
+        # Get status of submitted operations
+        results = batch.get_status(min_completed=num_operations, timeout_ms=5000)
+        
+        # Check results
+        for i, result in enumerate(results):
+            if result.is_complete():
+                pass
+            elif result.has_error():
+                pass
+            else:
+                pass
+        
+        assert all(r.is_complete() for r in results), "Not all read operations completed successfully"
+    
+    # Verify data by copying read buffers back to host and comparing
     for i in range(num_operations):
         host_buffer = np.empty(chunk_size, dtype=np.uint8)
-        err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, int(gpu_buffers[i].handle), chunk_size)
+        err, = cuda.cuMemcpyDtoH(host_buffer.ctypes.data, int(gpu_read_buffers[i].handle), chunk_size)
         assert err == cuda.CUresult.CUDA_SUCCESS
         
         expected_chunk = test_data[i * chunk_size:(i + 1) * chunk_size]
         np.testing.assert_array_equal(expected_chunk, host_buffer)
-        print(f"  Chunk {i}: ✓ Data matches")
+    
+    # Cleanup read buffers
+    for buf_read_handle in buf_read_handles:
+        buf_read_handle.close()
     
     # Cleanup - gpu_buffers are automatically freed when they go out of scope!
     for buf_handle in buf_handles:
@@ -112,8 +164,6 @@ def main():
     
     if os.path.exists(filename):
         os.unlink(filename)
-    
-    print("\n✓ Batch I/O example completed successfully!")
 
 
 if __name__ == "__main__":
